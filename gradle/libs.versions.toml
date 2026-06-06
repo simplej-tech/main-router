@@ -1,0 +1,38 @@
+[versions]
+common-configs = "0.1.0"
+downstream-clients = "0.1.0"
+spring-boot = "3.3.5"
+resilience4j = "2.2.0"
+
+[libraries]
+# In-house libs (published to mavenLocal from sibling repos)
+common-configs = { module = "com.example:common-configs", version.ref = "common-configs" }
+bio-query-client = { module = "com.example:bio-query-client", version.ref = "downstream-clients" }
+match-client = { module = "com.example:match-client", version.ref = "downstream-clients" }
+social-client = { module = "com.example:social-client", version.ref = "downstream-clients" }
+
+# BOM (applied as a platform in :common)
+spring-boot-deps = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+
+# Spring Boot starters (versions managed by spring-boot-deps platform)
+spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter" }
+spring-boot-starter-json = { module = "org.springframework.boot:spring-boot-starter-json" }
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-boot-starter-aop = { module = "org.springframework.boot:spring-boot-starter-aop" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+spring-boot-config-processor = { module = "org.springframework.boot:spring-boot-configuration-processor" }
+
+# Spring Kafka (versions managed by spring-boot-deps platform)
+spring-kafka = { module = "org.springframework.kafka:spring-kafka" }
+spring-kafka-test = { module = "org.springframework.kafka:spring-kafka-test" }
+
+# Integration testing
+awaitility = { module = "org.awaitility:awaitility" }
+wiremock = { module = "org.wiremock:wiremock-standalone", version = "3.9.2" }
+
+# Resilience4j (Spring Boot 3 starter — pulls AOP + actuator integration)
+resilience4j-spring-boot3 = { module = "io.github.resilience4j:resilience4j-spring-boot3", version.ref = "resilience4j" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

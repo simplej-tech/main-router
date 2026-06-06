@@ -1,0 +1,38 @@
+plugins {
+    id 'java'
+    alias(libs.plugins.spring.boot)
+}
+
+group = 'com.example'
+version = '0.1.0'
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-parameters'
+}
+
+dependencies {
+    implementation platform(libs.spring.boot.deps)
+
+    implementation libs.spring.boot.starter
+    implementation libs.spring.boot.starter.json
+    implementation libs.spring.kafka
+    implementation libs.common.configs
+
+    testImplementation libs.spring.boot.starter.test
+    testImplementation libs.spring.kafka.test
+}

@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: router
+  main:
+    web-application-type: none
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: router
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+
+kafka:
+  encryption:
+    use-encryption: true
+    kms:
+      key-arn: ${KMS_KEY_ID:alias/demo}
+      region: ${AWS_REGION:us-east-1}
+      endpoint: ${KMS_ENDPOINT:http://localhost:4566}
+    cache:
+      ttl-minutes: 30
+      max-messages-per-key: 1000
+      capacity: 100
+
+app:
+  topics:
+    requests: requests
+    standard-downstream: standard-downstream
+    social-express: social-express
+
+logging:
+  level:
+    com.example.router: INFO
