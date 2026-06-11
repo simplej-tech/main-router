@@ -11,8 +11,11 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
     producer:
+      transaction-id-prefix: router-tx-
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+    listener:
+      type: batch
 
 kafka:
   encryption:
@@ -25,12 +28,22 @@ kafka:
       ttl-minutes: 30
       max-messages-per-key: 1000
       capacity: 100
+  # Permits/sec for each throttled flow. Only active under the 'kafka-rate-limit-enabled' profile;
+  # otherwise the beans are no-op DisabledRateLimiters.
+  rate-limit:
+    router: 50.0   # consume -> produce (Kafka) path
+    audit: 25.0    # DynamoDB audit-write path (one permit per persist/flush)
 
 app:
   topics:
     requests: requests
     standard-downstream: standard-downstream
     social-express: social-express
+  audit:
+    dynamo:
+      table: ${AUDIT_TABLE:router-audit-log}
+      region: ${AWS_REGION:us-east-1}
+      endpoint: ${DYNAMO_ENDPOINT:http://localhost:4566}
 
 logging:
   level:

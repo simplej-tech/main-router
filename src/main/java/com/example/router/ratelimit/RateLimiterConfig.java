@@ -11,13 +11,17 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 
 /**
- * Wires the single router-flow rate limiter. Only one named bean here — no composite, because the
- * router has just one flow to throttle. {@link RouterListener} injects this directly via
- * {@code @Qualifier("routerRateLimiter")}.
- *
- * <p>Two profile-gated definitions sharing the same bean name:
+ * Wires the router's rate limiters. Two independent flows are throttled separately:
  * <ul>
- *   <li>profile ON  → {@link RateLimiterWrapperImpl} at {@code kafka.rate-limit.router} permits/sec.</li>
+ *   <li>{@code routerRateLimiter} — the consume→produce (Kafka) path. {@link RouterListener} injects
+ *       it via {@code @Qualifier("routerRateLimiter")}.</li>
+ *   <li>{@code auditRateLimiter} — the DynamoDB audit-write path. {@code AuditService} injects it via
+ *       {@code @Qualifier("auditRateLimiter")} and acquires a permit per flush.</li>
+ * </ul>
+ * No composite — the two limiters are unrelated and tuned independently. Each name has two
+ * profile-gated definitions:
+ * <ul>
+ *   <li>profile ON  → {@link RateLimiterWrapperImpl} at {@code kafka.rate-limit.<name>} permits/sec.</li>
  *   <li>profile OFF → {@link DisabledRateLimiter} no-op.</li>
  * </ul>
  */
@@ -25,6 +29,7 @@ import org.springframework.context.annotation.Profile;
 public class RateLimiterConfig {
 
     static final String ROUTER = "routerRateLimiter";
+    static final String AUDIT = "auditRateLimiter";
 
     @Bean(ROUTER)
     @Profile(Profiles.KAFKA_RATE_LIMIT_ENABLED)
@@ -36,6 +41,19 @@ public class RateLimiterConfig {
     @Bean(ROUTER)
     @Profile("!" + Profiles.KAFKA_RATE_LIMIT_ENABLED)
     public RateLimiterWrapper routerRateLimiterDisabled() {
+        return new DisabledRateLimiter();
+    }
+
+    @Bean(AUDIT)
+    @Profile(Profiles.KAFKA_RATE_LIMIT_ENABLED)
+    public RateLimiterWrapper auditRateLimiterEnabled(
+            @Value("${kafka.rate-limit.audit:25.0}") double permitsPerSecond) {
+        return new RateLimiterWrapperImpl(RateLimiter.create(permitsPerSecond));
+    }
+
+    @Bean(AUDIT)
+    @Profile("!" + Profiles.KAFKA_RATE_LIMIT_ENABLED)
+    public RateLimiterWrapper auditRateLimiterDisabled() {
         return new DisabledRateLimiter();
     }
 }

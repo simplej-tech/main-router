@@ -24,7 +24,7 @@ services:
     ports:
       - "4566:4566"
     environment:
-      SERVICES: kms
+      SERVICES: kms,dynamodb
       DEBUG: "0"
       DEFAULT_REGION: us-east-1
     volumes:
