@@ -1,0 +1,60 @@
+spring:
+  application:
+    name: e2e-driver
+  main:
+    web-application-type: none
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      transaction-id-prefix: e2e-driver-tx-
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      # group-id must be set so common-configs wires the consumer infra; the actual group is made
+      # unique per run by the @KafkaListener groupId (UUID suffix), so runs never replay history.
+      group-id: e2e-driver
+      auto-offset-reset: ${E2E_OFFSET_RESET:latest}
+      isolation-level: read_committed
+      enable-auto-commit: false
+      max-poll-records: 50
+    listener:
+      ack-mode: BATCH
+      type: batch
+
+kafka:
+  encryption:
+    use-encryption: true
+    kms:
+      key-arn: ${KMS_KEY_ID:alias/demo}
+      region: ${AWS_REGION:us-east-1}
+      endpoint: ${KMS_ENDPOINT:http://localhost:4566}
+    cache:
+      ttl-minutes: 30
+      max-messages-per-key: 1000
+      capacity: 100
+  admin:
+    enabled: false
+
+app:
+  topics:
+    requests: ${REQUESTS_TOPIC:requests}
+    results: ${RESULTS_TOPIC:downstream-results}
+    dlt: ${DLT_TOPIC:downstream-dlt}
+  e2e:
+    group-prefix: ${E2E_GROUP:e2e-driver}
+    standard-count: ${E2E_STANDARD_COUNT:2}
+    express-count: ${E2E_EXPRESS_COUNT:2}
+    await-seconds: ${E2E_AWAIT_SECONDS:30}
+    dlt:
+      # Dead-letter phase: force downstream failures and assert the messages land on the DLT topic.
+      # Requires downstream-service's /control endpoint — disable for deployed envs that lack it.
+      # Keep count small so bio's circuit breaker (min 5 calls) stays closed and the listener doesn't pause.
+      enabled: ${E2E_DLT_ENABLED:true}
+      count: ${E2E_DLT_COUNT:2}
+      control-url: ${DOWNSTREAM_CONTROL_URL:http://localhost:8080}
+
+logging:
+  level:
+    com.example.e2e: INFO
+    org.apache.kafka: WARN

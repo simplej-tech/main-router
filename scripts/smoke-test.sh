@@ -1,116 +1,113 @@
 #!/usr/bin/env bash
-# End-to-end smoke test:
-#   1. Ensure docker compose stack is up (Kafka + LocalStack)
-#   2. Start router, left-processor, right-processor in background
-#   3. Publish one left and one right message
-#   4. Verify the router routed and the processors decrypted
-#   5. Tear down the apps (compose stack stays up)
+# End-to-end smoke test for the whole playground:
+#   1. Bring up the compose infra (Kafka + LocalStack KMS/Dynamo)
+#   2. Build every app (from mavenLocal sibling libs)
+#   3. Pre-create the topics, start the full fleet in the background
+#        downstream-service (mock backend) + main-router + downstream-router + social-express-router
+#   4. Run the e2e-driver — it publishes an encrypted scenario to `requests` and validates the
+#      decrypted results on the results topic. The driver's exit code is this script's exit code.
+#   5. Tear the apps down (compose infra is left running for fast reruns).
 #
-# Prereqs: `./gradlew build` already run; LocalStack KMS alias/demo exists.
+# The driver — not log-grepping — is the source of truth: it correlates each published id with its
+# DownstreamResult and asserts routing + success. Override scenario size with E2E_STANDARD_COUNT /
+# E2E_EXPRESS_COUNT; timeouts with START_TIMEOUT / E2E_AWAIT_SECONDS.
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # main-router
+PLAYGROUND="$(cd "$REPO_ROOT/.." && pwd)"                       # kafka-router-playground
+COMPOSE="$REPO_ROOT/compose.yaml"
 LOG_DIR="${LOG_DIR:-/tmp/kp-logs}"
-RUN_ID="${RUN_ID:-$(date +%s)}"
-START_TIMEOUT="${START_TIMEOUT:-90}"
-DECRYPT_TIMEOUT="${DECRYPT_TIMEOUT:-30}"
+START_TIMEOUT="${START_TIMEOUT:-120}"
 
+# Dummy creds so the AWS SDK can sign requests to LocalStack KMS.
 export AWS_ACCESS_KEY_ID=test
 export AWS_SECRET_ACCESS_KEY=test
+export AWS_REGION=us-east-1
 
-ROUTER_JAR="$REPO_ROOT/router/build/libs/router-0.1.0.jar"
-LEFT_JAR="$REPO_ROOT/left-processor/build/libs/left-processor-0.1.0.jar"
-RIGHT_JAR="$REPO_ROOT/right-processor/build/libs/right-processor-0.1.0.jar"
-PUBLISHER_JAR="$REPO_ROOT/publisher-cli/build/libs/publisher-cli-0.1.0.jar"
+DS_JAR="$PLAYGROUND/downstream-service/build/libs/downstream-service-0.1.0.jar"
+ROUTER_JAR="$REPO_ROOT/build/libs/main-router-0.1.0.jar"
+STD_JAR="$PLAYGROUND/downstream-router/build/libs/downstream-router-0.1.0.jar"
+# e2e-driver + social-express-router are subprojects of this repo (built by the main-router build below).
+EXP_JAR="$REPO_ROOT/social-express-router/build/libs/social-express-router-0.1.0.jar"
+DRIVER_JAR="$REPO_ROOT/e2e-driver/build/libs/e2e-driver-0.1.0.jar"
 
-for jar in "$ROUTER_JAR" "$LEFT_JAR" "$RIGHT_JAR" "$PUBLISHER_JAR"; do
-    [ -f "$jar" ] || { echo "Missing jar: $jar"; echo "Run ./gradlew build first."; exit 1; }
-done
+TOPICS=(requests standard-downstream social-express downstream-results downstream-dlt)
 
 mkdir -p "$LOG_DIR"
-rm -f "$LOG_DIR"/router.log "$LOG_DIR"/left.log "$LOG_DIR"/right.log
-
-ROUTER_PID=""
-LEFT_PID=""
-RIGHT_PID=""
+PIDS=()
 
 cleanup() {
-    local exit_code=$?
+    local code=$?
     echo
-    echo "Stopping apps..."
-    [ -n "$ROUTER_PID" ] && kill "$ROUTER_PID" 2>/dev/null || true
-    [ -n "$LEFT_PID" ]   && kill "$LEFT_PID"   2>/dev/null || true
-    [ -n "$RIGHT_PID" ]  && kill "$RIGHT_PID"  2>/dev/null || true
+    echo "==> Stopping apps (compose infra left running; 'docker compose -f $COMPOSE down' to stop it)..."
+    for pid in "${PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done
     wait 2>/dev/null || true
-    exit $exit_code
+    exit $code
 }
 trap cleanup EXIT INT TERM
 
-wait_for() {
-    # wait_for <log-file> <pattern> <timeout-seconds> <description>
-    local file=$1 pattern=$2 timeout=$3 desc=$4
-    local elapsed=0
+wait_for() {  # wait_for <log> <pattern> <timeout> <desc>
+    local file=$1 pattern=$2 timeout=$3 desc=$4 elapsed=0
     until grep -q -- "$pattern" "$file" 2>/dev/null; do
         if [ "$elapsed" -ge "$timeout" ]; then
             echo "TIMEOUT after ${timeout}s waiting for: $desc"
-            echo "--- tail of $file ---"
-            tail -n 30 "$file" || true
+            echo "--- tail of $file ---"; tail -n 30 "$file" || true
             return 1
         fi
-        sleep 2
-        elapsed=$((elapsed + 2))
+        sleep 2; elapsed=$((elapsed + 2))
     done
 }
 
-echo "==> Run ID: $RUN_ID"
+start_app() {  # start_app <jar> <log-name> <started-pattern>
+    local jar=$1 name=$2 pattern=$3
+    [ -f "$jar" ] || { echo "Missing jar: $jar (build failed?)"; exit 1; }
+    echo "==> Starting $name..."
+    java -jar "$jar" > "$LOG_DIR/$name.log" 2>&1 &
+    PIDS+=($!)
+    wait_for "$LOG_DIR/$name.log" "$pattern" "$START_TIMEOUT" "$name startup"
+}
 
-echo "==> Ensuring docker compose stack is up..."
-cd "$REPO_ROOT"
-if ! docker compose ps --status running --format '{{.Service}}' 2>/dev/null | grep -q '^kafka$'; then
-    docker compose up -d
+echo "==> Infra up (Kafka + LocalStack)..."
+docker compose -f "$COMPOSE" up -d
+
+echo "==> Waiting for LocalStack KMS to be ready..."
+elapsed=0
+until curl -s http://localhost:4566/_localstack/health 2>/dev/null | grep -qE '"kms": *"(running|available)"'; do
+    [ "$elapsed" -ge 60 ] && { echo "TIMEOUT waiting for LocalStack KMS"; exit 1; }
+    sleep 2; elapsed=$((elapsed + 2))
+done
+sleep 3  # let the init ready.d scripts finish creating alias/demo + the audit table
+
+echo "==> Building apps (downstream-service + downstream-router + this repo's root/e2e-driver/social-express-router)..."
+( cd "$PLAYGROUND/downstream-service"      && ./gradlew build -x test -q )
+( cd "$PLAYGROUND/downstream-router"       && ./gradlew build -x test -q )
+( cd "$REPO_ROOT"                          && ./gradlew build -x test -q )   # builds root + :e2e-driver + :social-express-router
+
+echo "==> Pre-creating topics..."
+for t in "${TOPICS[@]}"; do
+    docker compose -f "$COMPOSE" exec -T kafka \
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+        --create --if-not-exists --topic "$t" --partitions 1 --replication-factor 1 >/dev/null
+done
+
+rm -f "$LOG_DIR"/*.log
+start_app "$DS_JAR"     downstream-service    "Started DownstreamApplication"
+start_app "$ROUTER_JAR" main-router           "Started RouterApplication"
+start_app "$STD_JAR"    downstream-router      "Started StandardDownstreamApplication"
+start_app "$EXP_JAR"    social-express-router  "Started SocialExpressApplication"
+
+echo "==> Fleet is up. Running e2e-driver..."
+[ -f "$DRIVER_JAR" ] || { echo "Missing driver jar: $DRIVER_JAR"; exit 1; }
+set +e
+java -jar "$DRIVER_JAR"
+DRIVER_EXIT=$?
+set -e
+
+echo
+if [ "$DRIVER_EXIT" -eq 0 ]; then
+    echo "==> Smoke test PASSED."
+else
+    echo "==> Smoke test FAILED (driver exit $DRIVER_EXIT). App logs in $LOG_DIR/."
 fi
-# Give Kafka a few seconds to accept connections
-sleep 5
-
-echo "==> Starting router..."
-java -jar "$ROUTER_JAR" > "$LOG_DIR/router.log" 2>&1 &
-ROUTER_PID=$!
-
-echo "==> Starting left-processor..."
-java -jar "$LEFT_JAR" > "$LOG_DIR/left.log" 2>&1 &
-LEFT_PID=$!
-
-echo "==> Starting right-processor..."
-java -jar "$RIGHT_JAR" > "$LOG_DIR/right.log" 2>&1 &
-RIGHT_PID=$!
-
-echo "==> Waiting for apps to start (timeout ${START_TIMEOUT}s)..."
-wait_for "$LOG_DIR/router.log" "Started RouterApplication" "$START_TIMEOUT" "router startup"
-wait_for "$LOG_DIR/left.log"   "Started LeftApplication"   "$START_TIMEOUT" "left startup"
-wait_for "$LOG_DIR/right.log"  "Started RightApplication"  "$START_TIMEOUT" "right startup"
-
-LEFT_KEY="left-$RUN_ID"
-RIGHT_KEY="right-$RUN_ID"
-
-echo "==> Publishing left message (id=$LEFT_KEY)..."
-java -jar "$PUBLISHER_JAR" --destination=left --message="smoke-left-$RUN_ID" --id="$LEFT_KEY" 2>&1 \
-    | grep -E 'Published|ERROR' || true
-
-echo "==> Publishing right message (id=$RIGHT_KEY)..."
-java -jar "$PUBLISHER_JAR" --destination=right --message="smoke-right-$RUN_ID" --id="$RIGHT_KEY" 2>&1 \
-    | grep -E 'Published|ERROR' || true
-
-echo "==> Waiting for processors to decrypt (timeout ${DECRYPT_TIMEOUT}s)..."
-wait_for "$LOG_DIR/left.log"  "LEFT received id=$LEFT_KEY"   "$DECRYPT_TIMEOUT" "left decryption"
-wait_for "$LOG_DIR/right.log" "RIGHT received id=$RIGHT_KEY" "$DECRYPT_TIMEOUT" "right decryption"
-
-echo
-echo "=== ROUTER ==="
-grep "Routed key=.*-$RUN_ID" "$LOG_DIR/router.log" || true
-echo "=== LEFT ==="
-grep "LEFT received id=$LEFT_KEY" "$LOG_DIR/left.log" || true
-echo "=== RIGHT ==="
-grep "RIGHT received id=$RIGHT_KEY" "$LOG_DIR/right.log" || true
-echo
-echo "==> Smoke test passed."
+exit "$DRIVER_EXIT"

@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: social-express-router
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      transaction-id-prefix: social-express-tx-
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      group-id: social-express-router
+      auto-offset-reset: earliest
+      isolation-level: read_committed
+      enable-auto-commit: false
+      max-poll-records: 1
+      properties:
+        max.poll.interval.ms: 300000
+    listener:
+      ack-mode: BATCH
+      type: batch
+      concurrency: 1
+
+server:
+  port: ${SERVER_PORT:8082}
+
+kafka:
+  encryption:
+    use-encryption: true
+    kms:
+      key-arn: ${KMS_KEY_ID:alias/demo}
+      region: ${AWS_REGION:us-east-1}
+      endpoint: ${KMS_ENDPOINT:http://localhost:4566}
+    cache:
+      ttl-minutes: 30
+      max-messages-per-key: 1000
+      capacity: 100
+
+app:
+  topics:
+    social-express: ${SOCIAL_EXPRESS_TOPIC:social-express}
+    results: ${RESULTS_TOPIC:downstream-results}
+  # Setting app.social.base-url activates the social-client lib's auto-config (SocialConfig),
+  # which wires the ApiClient + SocialApi + a plain SocialClient bean pointed at this URL.
+  social:
+    base-url: ${SOCIAL_URL:http://localhost:8080}
+
+logging:
+  level:
+    com.example.socialexpress: INFO

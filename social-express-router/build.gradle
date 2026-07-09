@@ -1,0 +1,81 @@
+plugins {
+    id 'java'
+    alias(libs.plugins.spring.boot)
+}
+
+group = 'com.example'
+version = '0.1.0'
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-parameters'
+}
+
+sourceSets {
+    integration {
+        java.srcDir 'src/test/integration/java'
+        resources.srcDir 'src/test/integration/resources'
+        compileClasspath += sourceSets.main.output + sourceSets.test.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.test.output
+    }
+}
+
+configurations {
+    integrationImplementation.extendsFrom testImplementation
+    integrationRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+// Align the embedded broker (kafka_2.13 + server modules from spring-kafka-test) with the
+// encryption lib's kafka-clients — same rationale as the sibling consumer repos.
+[configurations.integrationCompileClasspath, configurations.integrationRuntimeClasspath].each { cfg ->
+    cfg.resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'org.apache.kafka') {
+            details.useVersion '3.7.1'
+        }
+    }
+}
+
+dependencies {
+    implementation platform(libs.spring.boot.deps)
+
+    implementation libs.spring.boot.starter
+    implementation libs.spring.boot.starter.json
+    implementation libs.spring.boot.starter.web
+    implementation libs.spring.boot.starter.actuator
+    implementation libs.common.configs
+    implementation libs.social.client
+    implementation libs.spring.kafka
+
+    annotationProcessor platform(libs.spring.boot.deps)
+    annotationProcessor libs.spring.boot.config.processor
+
+    testImplementation libs.spring.boot.starter.test
+
+    integrationImplementation libs.spring.kafka.test
+    integrationImplementation libs.awaitility
+    integrationImplementation libs.wiremock
+}
+
+tasks.register('integrationTest', Test) {
+    group = 'verification'
+    description = 'social-express consume -> social API -> results produce IT (EmbeddedKafka + WireMock).'
+    testClassesDirs = sourceSets.integration.output.classesDirs
+    classpath = sourceSets.integration.runtimeClasspath
+    useJUnitPlatform()
+    shouldRunAfter test
+    systemProperty 'junit.jupiter.execution.timeout.default', '90s'
+}
