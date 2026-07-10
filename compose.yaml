@@ -19,13 +19,36 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg
 
-  localstack:
-    image: localstack/localstack:3.8
+  # Local AWS emulator (MiniStack, MIT) on :4566 — KMS + DynamoDB for local dev.
+  # Drop-in replacement for LocalStack: same port + API, LocalStack-health-compatible.
+  ministack:
+    image: ministackorg/ministack:latest   # pin to a released tag once settled
     ports:
       - "4566:4566"
     environment:
-      SERVICES: kms,dynamodb
-      DEBUG: "0"
-      DEFAULT_REGION: us-east-1
+      GATEWAY_PORT: 4566
+      LOG_LEVEL: INFO
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+
+  # One-shot init: waits for MiniStack, then creates the KMS alias/demo key + audit DynamoDB table.
+  # Runs the AWS CLI from a sidecar (MiniStack ships no awslocal), reaching MiniStack over the compose
+  # network; AWS_ENDPOINT_URL points every aws call at it. Exits once the scripts complete.
+  ministack-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      - ministack
+    environment:
+      AWS_ENDPOINT_URL: http://ministack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
     volumes:
-      - ./localstack/init:/etc/localstack/init/ready.d/
+      - ./ministack/init:/init:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        until aws kms list-keys >/dev/null 2>&1; do echo "waiting for ministack..."; sleep 2; done
+        for s in /init/*.sh; do echo "== running $$s =="; bash "$$s"; done
+        echo "ministack-init complete"

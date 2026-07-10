@@ -1,17 +1,18 @@
 #!/bin/bash
+# Runs in the ministack-init sidecar (aws CLI). AWS_ENDPOINT_URL targets MiniStack.
 set -euo pipefail
 
-if awslocal kms list-aliases --query 'Aliases[?AliasName==`alias/demo`].AliasName' --output text | grep -q alias/demo; then
+if aws kms list-aliases --query 'Aliases[?AliasName==`alias/demo`].AliasName' --output text | grep -q alias/demo; then
     echo "alias/demo already exists, skipping"
     exit 0
 fi
 
-KEY_ID=$(awslocal kms create-key \
+KEY_ID=$(aws kms create-key \
     --description "kafka-playground demo key" \
     --query 'KeyMetadata.KeyId' \
     --output text)
 
-awslocal kms create-alias \
+aws kms create-alias \
     --alias-name alias/demo \
     --target-key-id "$KEY_ID"
 
