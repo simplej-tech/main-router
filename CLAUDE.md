@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `main-router` is the **router** — a small Spring Boot app that consumes one input Kafka topic and produces to one of two output topics based on the `destination` header. Nothing else. The downstream consumer, the publisher CLI, and the mock HTTP backend live in sibling repos.
 
-This repo also hosts the shared dev infra (`compose.yaml`: Kafka + LocalStack KMS) that the rest of the ecosystem connects to.
+This repo also hosts the shared dev infra (`compose.yaml`: Kafka + MiniStack for KMS + DynamoDB) that the rest of the ecosystem connects to.
 
 ## Build commands
 
@@ -16,7 +16,7 @@ Single-module Gradle project (Groovy DSL). Java 21 toolchain. Version catalog at
 ./gradlew build -x test                              # compile + bootJar
 ./gradlew bootRun                                    # run the router
 ./gradlew test                                       # (no tests yet)
-docker compose up -d                                 # kafka + localstack (shared ecosystem infra)
+docker compose up -d                                 # kafka + ministack (shared ecosystem infra)
 docker compose down                                  # stop the infra
 ./gradlew build --refresh-dependencies               # after common-configs republishes
 ```
@@ -27,9 +27,9 @@ This is one of 4 active repos in the playground stack:
 
 | Repo | Purpose | Connects to |
 |---|---|---|
-| `main-router` (this) | router: `requests` → `standard-downstream` / `social-express` | kafka, localstack (consumes encrypted bytes, produces encrypted bytes) |
-| `downstream-router` | consumes `standard-downstream`; calls bio + match + social with CB + backpressure + virtual-thread async | kafka, localstack, downstream-service (HTTP) |
-| `publisher-cli` | one-shot CLI to publish an encrypted message to `requests` | kafka, localstack |
+| `main-router` (this) | router: `requests` → `standard-downstream` / `social-express` | kafka, ministack (consumes encrypted bytes, produces encrypted bytes) |
+| `downstream-router` | consumes `standard-downstream`; calls bio + match + social with CB + backpressure + virtual-thread async | kafka, ministack, downstream-service (HTTP) |
+| `publisher-cli` | one-shot CLI to publish an encrypted message to `requests` | kafka, ministack |
 | `downstream-service` | mock HTTP backend (`/process`, `/match`, `/social`) | none |
 
 Plus the unchanged sibling libs:
@@ -55,9 +55,14 @@ End-to-end encryption: the router consumes via the lib's `DecryptingDeserializer
 
 ## Compose
 
-`compose.yaml` brings up Kafka (port 9092) + LocalStack KMS (port 4566). The `localstack/init/01-create-kms-key.sh` script creates `alias/demo` so every app's `kafka.encryption.kms.key-arn=alias/demo` works without manual setup.
+`compose.yaml` brings up Kafka (port 9092) + MiniStack (KMS + DynamoDB, port 4566) — an MIT-licensed,
+LocalStack-API-compatible emulator. A one-shot `ministack-init` sidecar (AWS CLI) waits for MiniStack
+and runs `ministack/init/*.sh`, which create the `alias/demo` KMS key and the `router-audit-log`
+DynamoDB table so every app's `kafka.encryption.kms.key-arn=alias/demo` (and the router's audit writes)
+work without manual setup. MiniStack ships no `awslocal`, so the init runs `aws` from the sidecar with
+`AWS_ENDPOINT_URL` pointed at it — hence the separate init container rather than mounted ready.d scripts.
 
-All four apps default to `localhost:9092` + `localhost:4566` — there is no app-level compose in any other repo. Spin up `docker compose up -d` here, then `bootRun` each app independently.
+All apps default to `localhost:9092` + `localhost:4566` — there is no app-level compose in any other repo. Spin up `docker compose up -d` here, then `bootRun` each app independently.
 
 ## When making changes
 
@@ -66,7 +71,7 @@ All four apps default to `localhost:9092` + `localhost:4566` — there is no app
 - **Add encryption changes / KMS endpoint overrides**: see `common-configs` — the lib owns the serializer/deserializer + KMS infra; this repo just consumes the auto-config.
 - **Smoke test end-to-end**:
   ```
-  docker compose up -d                           # kafka + localstack
+  docker compose up -d                           # kafka + ministack
   cd ../downstream-service && ./gradlew bootRun  # backend on :8080
   cd ../downstream-router && ./gradlew bootRun   # consumer on standard-downstream
   cd ../main-router && ./gradlew bootRun    # router on requests
