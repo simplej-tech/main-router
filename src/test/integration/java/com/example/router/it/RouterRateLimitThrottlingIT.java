@@ -7,9 +7,9 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -69,7 +69,7 @@ class RouterRateLimitThrottlingIT {
     @Autowired
     private KafkaTemplate<String, byte[]> kafkaTemplate;
 
-    @MockBean
+    @MockitoBean
     private AuditService audit;
 
     @Test
