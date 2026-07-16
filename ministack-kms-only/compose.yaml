@@ -1,0 +1,17 @@
+# Simplest possible local KMS: just MiniStack + one mock key. No Kafka, no DynamoDB, no sidecar.
+#
+#   docker compose up      # KMS on :4566, seeded with alias/demo
+#   docker compose down
+services:
+  kms:
+    image: ministackorg/ministack:latest
+    ports:
+      - "4566:4566"
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    # MiniStack runs the LocalStack-compatible ready.d hook after the gateway is up.
+    # The mounted script seeds one mock key so alias/demo resolves immediately.
+    volumes:
+      - ./init:/etc/localstack/init/ready.d:ro
