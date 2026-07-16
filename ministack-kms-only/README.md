@@ -13,14 +13,29 @@ cd main-router/ministack-kms-only
 docker compose up
 ```
 
-Leave this running — it holds the terminal and streams MiniStack's logs. Wait until
-you see the seed line go by:
+Leave this running — it holds the terminal and streams MiniStack's logs. On startup
+MiniStack prints a banner listing ~74 services and then `Ready — 74 services available`.
+That's normal; it always loads every service and "KMS-only" just means we only *use*
+KMS. Startup is **not** finished at that line.
+
+A few seconds **after** the `Ready` / `Running on http://0.0.0.0:4566` lines, the seed
+script runs. Look for these lines (the seed output is prefixed by `[ministack] stdout:`,
+not printed on its own):
 
 ```
-created mock KMS key <key-id> (alias/demo)
+INFO [ministack] Running ready script: /etc/localstack/init/ready.d/create-kms-key.sh
+INFO [kms] Created alias alias/demo -> <key-id>
+INFO [ministack]   stdout: created mock KMS key <key-id> (alias/demo)
+INFO [ministack] Ready script /etc/localstack/init/ready.d/create-kms-key.sh completed successfully
 ```
 
-That means KMS is up on `localhost:4566` with a key aliased `alias/demo`.
+Once you see those, KMS is up on `localhost:4566` with a key aliased `alias/demo`.
+
+Don't want to hunt through the log? Verify the key directly instead:
+
+```bash
+docker compose exec kms awslocal kms list-aliases   # -> shows alias/demo
+```
 
 (Prefer to get your prompt back? Use `docker compose up -d` to run it detached, then
 `docker compose logs -f` to watch, and `docker compose down` to stop it.)
