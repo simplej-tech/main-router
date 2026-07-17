@@ -5,6 +5,7 @@
 services:
   kms:
     image: ministackorg/ministack:latest
+    container_name: ministack-kms   # stable, predictable name in `docker ps`
     ports:
       - "4566:4566"
     environment:
